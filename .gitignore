@@ -6,6 +6,7 @@ faiss_index/
 *.CSV
 *.csv
 *.txt
+!requirements.txt
 *.pdf
 *.zip
 *.ZIP

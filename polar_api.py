@@ -71,7 +71,8 @@ def exchange_code_for_token(code, user_id: str):
     }
     
     try:
-        response = requests.post(POLAR_TOKEN_URL, data=data, headers=headers)
+        response = requests.post(POLAR_TOKEN_URL, data=data, headers=headers, timeout=15)
+        
         if response.status_code == 200:
             token_data = response.json()
             access_token = token_data.get("access_token")
@@ -91,8 +92,12 @@ def exchange_code_for_token(code, user_id: str):
         else:
             st.error(f"Errore scambio token Polar (HTTP {response.status_code}): {response.text}")
             return False
+            
+    except requests.exceptions.Timeout:
+        st.error("Timeout: il server di Polar non risponde.")
+        return False
     except Exception as e:
-        st.error(f"Eccezione durante la connessione a Polar: {e}")
+        st.error(f"Errore di connessione: {e}")
         return False
 
 def register_user(access_token: str, polar_user_id: str = None):

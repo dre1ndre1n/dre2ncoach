@@ -10,9 +10,10 @@ POLAR_API_BASE = "https://www.polaraccesslink.com/v3"
 def get_polar_auth_url():
     """Generate the Polar OAuth2 authorization URL."""
     client_id = st.secrets.get("POLAR_CLIENT_ID") or os.environ.get("POLAR_CLIENT_ID")
+    redirect_uri = st.secrets.get("STREAMLIT_URL") or "http://localhost:8501/"
     if not client_id:
         return None
-    return f"{POLAR_AUTH_URL}?response_type=code&client_id={client_id}"
+    return f"{POLAR_AUTH_URL}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
 
 import base64
 

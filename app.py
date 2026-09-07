@@ -58,6 +58,8 @@ if "code" in query_params:
     st.info("Ricevuto codice di autorizzazione Polar! Sto elaborando...")
     if exchange_code_for_token(auth_code, USER_ID):
         st.success("Account Polar connesso con successo!")
+    else:
+        st.error("Errore durante il salvataggio o l'autenticazione. Controlla che le tabelle Supabase esistano e le chiavi siano corrette.")
     # Clear query param
     st.query_params.clear()
 

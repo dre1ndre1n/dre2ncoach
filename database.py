@@ -29,7 +29,7 @@ def save_polar_token(user_id: str, access_token: str, user_polar_id: str):
         client.table("user_profiles").upsert(data).execute()
         return True
     except Exception as e:
-        print(f"Error saving token: {e}")
+        st.error(f"Errore nel salvataggio del token su Supabase (hai creato la tabella?): {e}")
         return False
 
 def get_polar_token(user_id: str):

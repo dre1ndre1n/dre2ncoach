@@ -109,7 +109,7 @@ def register_user(access_token: str, polar_user_id: str = None):
     }
     member_id = f"user_{polar_user_id}" if polar_user_id else "dre2ncoach_user"
     try:
-        res = requests.post(f"{POLAR_API_BASE}/users", json={"member-id": member_id}, headers=headers)
+        res = requests.post(f"{POLAR_API_BASE}/users", json={"member-id": member_id}, headers=headers, timeout=15)
         if res.status_code in (200, 201):
             print(f"Utente Polar registrato con successo: {res.status_code}")
         elif res.status_code == 409:

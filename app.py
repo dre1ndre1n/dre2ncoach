@@ -53,13 +53,14 @@ st.markdown("""
 query_params = st.query_params
 if "code" in query_params:
     auth_code = query_params["code"]
-    st.success("Ricevuto codice di autorizzazione Polar! Sto elaborando...")
+    if isinstance(auth_code, list):
+        auth_code = auth_code[0]
+    st.info("Ricevuto codice di autorizzazione Polar! Sto elaborando...")
     if exchange_code_for_token(auth_code, USER_ID):
         st.success("Account Polar connesso con successo!")
-    else:
-        st.error("Errore durante l'autenticazione Polar.")
     # Clear query param
     st.query_params.clear()
+
 
 st.markdown("<div class='title-text'>Dre2nCoach ⚡</div>", unsafe_allow_html=True)
 st.caption("AI Triathlon Training & Science-Backed Nutrition Coach (Cloud Connected)")
@@ -169,10 +170,10 @@ with tab_settings:
     k_polar_sec = st.text_input("Polar Client Secret", type="password")
     
     if st.button("Salva Temporaneamente in Memoria"):
-        if k_google: os.environ["GOOGLE_API_KEY"] = k_google
-        if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone
-        if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url
-        if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key
-        if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id
-        if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec
+        if k_google: os.environ["GOOGLE_API_KEY"] = k_google.strip()
+        if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone.strip()
+        if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url.strip()
+        if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key.strip()
+        if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id.strip()
+        if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec.strip()
         st.success("Chiavi salvate nella sessione!")

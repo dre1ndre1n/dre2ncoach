@@ -45,6 +45,21 @@ def get_polar_token(user_id: str):
         print(f"Error retrieving token: {e}")
     return None
 
+def get_polar_credentials(user_id: str):
+    """Retrieve both Polar access token and polar_user_id for a user."""
+    client = get_supabase_client()
+    if not client: return None, None
+    
+    try:
+        response = client.table("user_profiles").select("polar_access_token, polar_user_id").eq("user_id", user_id).execute()
+        if response.data and len(response.data) > 0:
+            row = response.data[0]
+            return row.get("polar_access_token"), row.get("polar_user_id")
+    except Exception as e:
+        print(f"Error retrieving polar credentials: {e}")
+    return None, None
+
+
 def save_workout(user_id: str, workout_data: dict):
     """Save a workout summary to Supabase."""
     client = get_supabase_client()

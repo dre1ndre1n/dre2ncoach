@@ -14,17 +14,27 @@ def get_polar_auth_url():
         return None
     return f"{POLAR_AUTH_URL}?response_type=code&client_id={client_id}"
 
+import base64
+
 def exchange_code_for_token(code: str, user_id: str):
     """Exchange OAuth code for access token and save it to Supabase."""
     client_id = st.secrets.get("POLAR_CLIENT_ID") or os.environ.get("POLAR_CLIENT_ID")
     client_secret = st.secrets.get("POLAR_CLIENT_SECRET") or os.environ.get("POLAR_CLIENT_SECRET")
+    redirect_uri = st.secrets.get("STREAMLIT_URL") or "http://localhost:8501/"
     
-    headers = {"Accept": "application/json"}
+    auth_str = f"{client_id}:{client_secret}"
+    encoded_auth = base64.b64encode(auth_str.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {encoded_auth}",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json"
+    }
+    
     data = {
         "grant_type": "authorization_code",
         "code": code,
-        "client_id": client_id,
-        "client_secret": client_secret
+        "redirect_uri": redirect_uri
     }
     
     response = requests.post(POLAR_TOKEN_URL, data=data, headers=headers)

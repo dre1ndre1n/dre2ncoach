@@ -1,23 +1,34 @@
 import os
 import tempfile
+import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone, ServerlessSpec
 
-INDEX_PATH = "faiss_index"
+PINECONE_INDEX_NAME = "dre2ncoach"
+
+def get_pinecone_client():
+    api_key = st.secrets.get("PINECONE_API_KEY") or os.environ.get("PINECONE_API_KEY")
+    if not api_key:
+        return None
+    return Pinecone(api_key=api_key)
 
 def build_rag_index(uploaded_pdfs):
     """
-    Takes a list of uploaded PDF files from Streamlit, processes them,
-    and builds/updates a local FAISS vector store.
+    Takes uploaded PDF files, processes them, and uploads embeddings to Pinecone.
     """
     if not uploaded_pdfs:
         return False
         
+    pc = get_pinecone_client()
+    if not pc:
+        st.error("Pinecone API Key is missing.")
+        return False
+        
     docs = []
     
-    # Save uploaded files temporarily so PyPDFLoader can read them
     with tempfile.TemporaryDirectory() as temp_dir:
         for uploaded_file in uploaded_pdfs:
             temp_path = os.path.join(temp_dir, uploaded_file.name)
@@ -35,26 +46,23 @@ def build_rag_index(uploaded_pdfs):
     
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     
-    # Check if index already exists
-    if os.path.exists(INDEX_PATH):
-        vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-        vectorstore.add_documents(splits)
-    else:
-        vectorstore = FAISS.from_documents(splits, embeddings)
-        
-    vectorstore.save_local(INDEX_PATH)
-    return True
+    try:
+        PineconeVectorStore.from_documents(splits, embeddings, index_name=PINECONE_INDEX_NAME)
+        return True
+    except Exception as e:
+        print(f"Error building Pinecone index: {e}")
+        return False
 
 def query_rag(query, k=3):
     """
-    Queries the local FAISS index and returns relevant context.
+    Queries the Pinecone index and returns relevant context.
     """
-    if not os.path.exists(INDEX_PATH):
-        return ""
+    pc = get_pinecone_client()
+    if not pc: return ""
         
     try:
         embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
+        vectorstore = PineconeVectorStore(index_name=PINECONE_INDEX_NAME, embedding=embeddings)
         docs = vectorstore.similarity_search(query, k=k)
         
         if not docs:

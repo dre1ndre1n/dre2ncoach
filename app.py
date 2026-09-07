@@ -5,14 +5,20 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from data_utils import process_training_files
 from rag_utils import build_rag_index, query_rag
+from polar_api import get_polar_auth_url, exchange_code_for_token, fetch_and_save_exercises
+from database import get_recent_workouts, get_polar_token
+from dashboards import render_dashboards
 
 # --- PAGE CONFIG ---
 st.set_page_config(
-    page_title="Dre2nCoach | AI Triathlon & Nutrition",
+    page_title="Dre2nCoach | Advanced AI Triathlon Coach",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Dummy user ID for this single-user app
+USER_ID = "samuele_default"
 
 # --- CUSTOM CSS ---
 st.markdown("""
@@ -33,11 +39,6 @@ st.markdown("""
         font-size: 3rem;
         margin-bottom: 0.5rem;
     }
-    .subtitle-text {
-        font-size: 1.2rem;
-        color: #94A3B8;
-        margin-bottom: 2rem;
-    }
     .sidebar-section {
         background: rgba(30, 41, 59, 0.45);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -45,124 +46,133 @@ st.markdown("""
         padding: 15px;
         margin-bottom: 20px;
     }
-    .stChatMessage {
-        background: rgba(30, 41, 59, 0.45) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        border-radius: 12px !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
+# --- HANDLE OAUTH CALLBACK ---
+query_params = st.query_params
+if "code" in query_params:
+    auth_code = query_params["code"]
+    st.success("Ricevuto codice di autorizzazione Polar! Sto elaborando...")
+    if exchange_code_for_token(auth_code, USER_ID):
+        st.success("Account Polar connesso con successo!")
+    else:
+        st.error("Errore durante l'autenticazione Polar.")
+    # Clear query param
+    st.query_params.clear()
+
 st.markdown("<div class='title-text'>Dre2nCoach ⚡</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle-text'>AI Triathlon Training & Science-Backed Nutrition Coach</div>", unsafe_allow_html=True)
-
-# --- STATE INITIALIZATION ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    # Add initial greeting
-    st.session_state.messages.append(AIMessage(content="Ciao! Sono Dre2nCoach, il tuo allenatore IA di Triathlon. Carica i tuoi dati di allenamento o i PDF scientifici nella sidebar, e chiedimi come impostare la tua settimana!"))
-
-if "athlete_context" not in st.session_state:
-    st.session_state.athlete_context = ""
+st.caption("AI Triathlon Training & Science-Backed Nutrition Coach (Cloud Connected)")
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h3 style='color: #38BDF8;'>⚙️ Settings</h3>", unsafe_allow_html=True)
-    api_key = st.text_input("Google Gemini API Key", type="password", help="Required to chat with the AI.")
-    if api_key:
-        os.environ["GOOGLE_API_KEY"] = api_key
-        
-    st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
-    st.markdown("<h3 style='color: #10B981;'>📈 Section A: Training Data</h3>", unsafe_allow_html=True)
-    st.caption("Upload Polar CSVs, TXT plans, or ZIP files.")
-    training_files = st.file_uploader("Upload Data", type=['csv', 'txt', 'zip'], accept_multiple_files=True)
-    
-    if st.button("Process Training Data"):
-        if training_files:
-            with st.spinner("Processing files..."):
-                context = process_training_files(training_files)
-                st.session_state.athlete_context = context
-                st.success("Training data loaded into context!")
+    st.markdown("<h3 style='color: #10B981;'>🔗 Polar Sync</h3>", unsafe_allow_html=True)
+    polar_token = get_polar_token(USER_ID)
+    if not polar_token:
+        auth_url = get_polar_auth_url()
+        if auth_url:
+            st.markdown(f"[Connetti Account Polar]({auth_url})")
         else:
-            st.warning("Please upload files first.")
-            
-    if st.session_state.athlete_context:
-        st.info("✅ Athlete context is active.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
-    st.markdown("<h3 style='color: #A855F7;'>📚 Section B: Knowledge Base</h3>", unsafe_allow_html=True)
-    st.caption("Upload PDFs (e.g. Monique Ryan's book) to enhance the coach's knowledge via RAG.")
-    pdf_files = st.file_uploader("Upload PDFs", type=['pdf'], accept_multiple_files=True)
-    
-    if st.button("Build Knowledge Base"):
-        if pdf_files:
-            with st.spinner("Chunking text and building FAISS index (this may take a minute)..."):
-                success = build_rag_index(pdf_files)
-                if success:
-                    st.success("Knowledge Base updated!")
+            st.warning("Configura POLAR_CLIENT_ID nelle Secrets per connettere Polar.")
+    else:
+        st.success("Polar Connesso")
+        if st.button("Sincronizza Allenamenti"):
+            with st.spinner("Sincronizzazione da Polar AccessLink..."):
+                count = fetch_and_save_exercises(USER_ID, polar_token)
+                if count > 0:
+                    st.success(f"Sincronizzati {count} nuovi allenamenti!")
+                elif count == 0:
+                    st.info("Nessun nuovo allenamento trovato.")
                 else:
-                    st.error("Failed to build index.")
+                    st.error("Errore di sincronizzazione.")
+
+    st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
+    st.markdown("<h3 style='color: #A855F7;'>📚 Libreria Permanente</h3>", unsafe_allow_html=True)
+    pdf_files = st.file_uploader("Carica PDF (Manuali/Scienza)", type=['pdf'], accept_multiple_files=True)
+    if st.button("Salva nella Libreria (Pinecone)"):
+        if pdf_files:
+            with st.spinner("Elaborazione e salvataggio sul database vettoriale..."):
+                if build_rag_index(pdf_files):
+                    st.success("Salvato permanentemente!")
+                else:
+                    st.error("Errore di salvataggio (controlla API Key Pinecone).")
         else:
-            st.warning("Please upload PDFs first.")
+            st.warning("Carica prima un PDF.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# --- MAIN CHAT INTERFACE ---
-for msg in st.session_state.messages:
-    if isinstance(msg, HumanMessage):
+# --- MAIN TABS ---
+tab_chat, tab_dash, tab_settings = st.tabs(["💬 Coach IA", "📈 Dashboards", "⚙️ Impostazioni API"])
+
+with tab_chat:
+    if "messages" not in st.session_state:
+        st.session_state.messages = [AIMessage(content="Ciao! Sono Dre2nCoach. Ho accesso al tuo storico Polar (se sincronizzato) e alla libreria scientifica su Pinecone. Come impostiamo la settimana?")]
+
+    for msg in st.session_state.messages:
+        with st.chat_message("user" if isinstance(msg, HumanMessage) else "assistant"):
+            st.write(msg.content)
+
+    user_input = st.chat_input("Chiedimi un consiglio o genera una scheda...")
+    if user_input:
+        st.session_state.messages.append(HumanMessage(content=user_input))
         with st.chat_message("user"):
-            st.write(msg.content)
-    elif isinstance(msg, AIMessage):
+            st.write(user_input)
+
         with st.chat_message("assistant"):
-            st.write(msg.content)
-
-# Chat Input
-user_input = st.chat_input("Ask Dre2nCoach about your training plan...")
-
-if user_input:
-    if not os.environ.get("GOOGLE_API_KEY"):
-        st.error("Please enter your Google Gemini API Key in the sidebar to chat.")
-        st.stop()
-
-    # Add user message to state and display
-    st.session_state.messages.append(HumanMessage(content=user_input))
-    with st.chat_message("user"):
-        st.write(user_input)
-
-    # Generate response
-    with st.chat_message("assistant"):
-        with st.spinner("Dre2nCoach is thinking..."):
-            try:
-                # 1. Retrieve RAG context
+            with st.spinner("Il Coach sta analizzando..."):
+                # 1. Recupera Allenamenti Recenti da Supabase
+                recent_workouts = get_recent_workouts(USER_ID, limit=14)
+                workout_context = "Nessun allenamento recente trovato nel DB."
+                if recent_workouts:
+                    workout_context = "Storico recenti allenamenti (da Supabase):\n"
+                    for w in recent_workouts:
+                        workout_context += f"- {w['date']}: {w['sport']} per {w['duration_minutes']} min, FC media: {w['heart_rate_avg']}. Note: {w['description']}\n"
+                
+                # 2. RAG da Pinecone
                 rag_context = query_rag(user_input, k=3)
                 
-                # 2. Build System Prompt
-                system_prompt_text = (
-                    "Sei Dre2nCoach, un esperto allenatore di Triathlon e nutrizionista sportivo. "
-                    "Segui i principi scientifici di Monique Ryan (Sports Nutrition for Endurance Athletes). "
-                    "Sei formattato per rispondere in modo professionale, motivante e analitico."
-                )
+                # 3. Router Logica
+                # Se l'utente chiede una scheda, usiamo un prompt pesante. Altrimenti chat veloce.
+                if "scheda" in user_input.lower() or "piano" in user_input.lower():
+                    system_prompt_text = (
+                        "Sei Dre2nCoach, esperto coach di Triathlon. Genera un piano di allenamento dettagliato.\n"
+                        f"{workout_context}\n"
+                        f"Usa questi principi scientifici: {rag_context}"
+                    )
+                else:
+                    system_prompt_text = (
+                        "Sei Dre2nCoach, assistente conversazionale di Triathlon. Rispondi in modo conciso.\n"
+                        f"{workout_context}\n{rag_context}"
+                    )
                 
-                if st.session_state.athlete_context:
-                    system_prompt_text += f"\n\nEcco i dati di allenamento attuali dell'atleta:\n{st.session_state.athlete_context}"
-                    
-                if rag_context:
-                    system_prompt_text += f"\n\nEcco alcune informazioni pertinenti dalla tua base di conoscenza scientifica:\n{rag_context}"
-                
-                # 3. Call LLM
                 llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.7)
-                
-                # Reconstruct full conversation for the LLM
                 full_chat = [SystemMessage(content=system_prompt_text)]
                 full_chat.extend(st.session_state.messages)
                 
-                response = llm.invoke(full_chat)
-                
-                # Display response
-                st.write(response.content)
-                
-                # Save to state
-                st.session_state.messages.append(AIMessage(content=response.content))
-                
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+                try:
+                    response = llm.invoke(full_chat)
+                    st.write(response.content)
+                    st.session_state.messages.append(AIMessage(content=response.content))
+                except Exception as e:
+                    st.error(f"Errore LLM (Controlla GOOGLE_API_KEY): {e}")
+
+with tab_dash:
+    render_dashboards(USER_ID)
+
+with tab_settings:
+    st.info("Per il deployment, salva queste chiavi in **Streamlit Cloud -> Advanced Settings -> Secrets**. Se le inserisci qui, verranno usate come variabili d'ambiente temporanee.")
+    
+    k_google = st.text_input("Google Gemini API Key", type="password")
+    k_pinecone = st.text_input("Pinecone API Key", type="password")
+    k_supa_url = st.text_input("Supabase URL")
+    k_supa_key = st.text_input("Supabase Key", type="password")
+    k_polar_id = st.text_input("Polar Client ID")
+    k_polar_sec = st.text_input("Polar Client Secret", type="password")
+    
+    if st.button("Salva Temporaneamente in Memoria"):
+        if k_google: os.environ["GOOGLE_API_KEY"] = k_google
+        if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone
+        if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url
+        if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key
+        if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id
+        if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec
+        st.success("Chiavi salvate nella sessione!")

@@ -50,7 +50,7 @@ def build_rag_index(uploaded_pdfs):
         PineconeVectorStore.from_documents(splits, embeddings, index_name=PINECONE_INDEX_NAME)
         return True
     except Exception as e:
-        print(f"Error building Pinecone index: {e}")
+        st.error(f"Errore caricamento su Pinecone (l'indice 'dre2ncoach' esiste?): {e}")
         return False
 
 def query_rag(query, k=3):

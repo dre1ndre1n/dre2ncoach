@@ -155,8 +155,9 @@ with tab_chat:
                     st.error("Google Gemini API Key mancante. Aggiungila nei Secrets di Streamlit Cloud o nel tab 'Impostazioni API'.")
                 else:
                     try:
+                        selected_model = st.session_state.get("gemini_model_choice", "gemini-1.5-flash")
                         llm = ChatGoogleGenerativeAI(
-                            model="gemini-1.5-flash",
+                            model=selected_model,
                             google_api_key=google_api_key,
                             temperature=0.7
                         )
@@ -166,8 +167,8 @@ with tab_chat:
                         st.write(response.content)
                         st.session_state.messages.append(AIMessage(content=response.content))
                     except Exception as e:
-                        st.error(f"Errore LLM: {e}")
-                        st.info("💡 Se l'errore indica 404 (model not found), controlla di aver generato la chiave su https://aistudio.google.com/app/apikey e non su Google Cloud Console senza l'API abilitata.")
+                        st.error(f"Errore LLM ({selected_model}): {e}")
+                        st.info("💡 Vai nel tab **⚙️ Impostazioni API** e clicca su **'Testa Connessione Gemini'** per verificare la chiave e scoprire quali modelli sono abilitati sul tuo account Google.")
 
 with tab_dash:
     render_dashboards(USER_ID)
@@ -175,6 +176,14 @@ with tab_dash:
 with tab_settings:
     st.info("Per il deployment, salva queste chiavi in **Streamlit Cloud -> Advanced Settings -> Secrets**. Se le inserisci qui, verranno usate come variabili d'ambiente temporanee.")
     
+    st.markdown("### 🤖 Configurazione Modello IA")
+    gemini_model = st.selectbox(
+        "Modello Gemini da utilizzare",
+        ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"],
+        key="gemini_model_choice"
+    )
+    
+    st.markdown("### 🔑 Chiavi API")
     k_google = st.text_input("Google Gemini API Key", type="password")
     k_pinecone = st.text_input("Pinecone API Key", type="password")
     k_supa_url = st.text_input("Supabase URL")
@@ -182,11 +191,31 @@ with tab_settings:
     k_polar_id = st.text_input("Polar Client ID")
     k_polar_sec = st.text_input("Polar Client Secret", type="password")
     
-    if st.button("Salva Temporaneamente in Memoria"):
-        if k_google: os.environ["GOOGLE_API_KEY"] = k_google.strip()
-        if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone.strip()
-        if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url.strip()
-        if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key.strip()
-        if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id.strip()
-        if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec.strip()
-        st.success("Chiavi salvate nella sessione!")
+    col_save, col_test = st.columns(2)
+    with col_save:
+        if st.button("💾 Salva Chiavi Temporaneamente"):
+            if k_google: os.environ["GOOGLE_API_KEY"] = k_google.strip()
+            if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone.strip()
+            if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url.strip()
+            if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key.strip()
+            if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id.strip()
+            if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec.strip()
+            st.success("Chiavi salvate nella sessione!")
+            
+    with col_test:
+        if st.button("🧪 Testa Connessione Gemini"):
+            test_key = k_google.strip() if k_google else (os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None))
+            if not test_key:
+                st.error("Nessuna chiave Google Gemini trovata per il test.")
+            else:
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=test_key)
+                    models = [m.name.replace("models/", "") for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+                    if models:
+                        st.success(f"✅ Connessione riuscita! Modelli disponibili con questa chiave: {', '.join(models[:6])}")
+                    else:
+                        st.warning("⚠️ Connessione effettuata, ma nessun modello ha il permesso 'generateContent'.")
+                except Exception as ex:
+                    st.error(f"❌ Errore test Google Gemini: {ex}")
+                    st.info("Consiglio: crea una chiave gratuita direttamente su https://aistudio.google.com/app/apikey")

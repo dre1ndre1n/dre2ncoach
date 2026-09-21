@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from data_utils import process_training_files
@@ -90,6 +91,67 @@ with st.sidebar:
                     st.error("Errore di sincronizzazione.")
 
     st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
+    st.markdown("<h3 style='color: #38BDF8;'>🤖 Modello IA & Chiavi</h3>", unsafe_allow_html=True)
+    
+    ai_provider = st.selectbox(
+        "Fornitore IA",
+        ["Google Gemini", "OpenAI (ChatGPT)"],
+        key="ai_provider_select"
+    )
+    
+    if ai_provider == "Google Gemini":
+        selected_model = st.selectbox(
+            "Modello Gemini",
+            ["gemini-2.0-flash", "gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+            index=0,
+            key="gemini_model_choice"
+        )
+        gemini_input_key = st.text_input("Inserisci/Cambia Gemini Key", type="password", key="side_gemini_key")
+        if gemini_input_key:
+            os.environ["GOOGLE_API_KEY"] = gemini_input_key.strip()
+            
+        if st.button("🧪 Testa Chiave Gemini"):
+            test_key = os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None)
+            if not test_key:
+                st.error("Nessuna chiave Google Gemini inserita o trovata nei Secrets.")
+            else:
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=test_key)
+                    models = [m.name.replace("models/", "") for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+                    if models:
+                        st.success(f"✅ Connessione OK! Modelli attivi: {', '.join(models[:5])}")
+                    else:
+                        st.warning("⚠️ Chiave valida ma nessun modello con generateContent trovato.")
+                except Exception as ex:
+                    st.error(f"❌ Errore Google API: {ex}")
+    else:
+        selected_model = st.selectbox(
+            "Modello OpenAI",
+            ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+            index=0,
+            key="openai_model_choice"
+        )
+        openai_input_key = st.text_input("Inserisci OpenAI API Key", type="password", key="side_openai_key")
+        if openai_input_key:
+            os.environ["OPENAI_API_KEY"] = openai_input_key.strip()
+            
+        if st.button("🧪 Testa Chiave OpenAI"):
+            test_key = os.environ.get("OPENAI_API_KEY") or (st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets else None)
+            if not test_key:
+                st.error("Nessuna chiave OpenAI inserita o trovata nei Secrets.")
+            else:
+                try:
+                    from openai import OpenAI
+                    client = OpenAI(api_key=test_key)
+                    client.models.list()
+                    st.success("✅ Connessione OpenAI riuscita!")
+                except Exception as ex:
+                    st.error(f"❌ Errore OpenAI API: {ex}")
+                    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
     st.markdown("<h3 style='color: #A855F7;'>📚 Libreria Permanente</h3>", unsafe_allow_html=True)
     pdf_files = st.file_uploader("Carica PDF (Manuali/Scienza)", type=['pdf'], accept_multiple_files=True)
     if st.button("Salva nella Libreria (Pinecone)"):
@@ -104,7 +166,7 @@ with st.sidebar:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- MAIN TABS ---
-tab_chat, tab_dash, tab_settings = st.tabs(["💬 Coach IA", "📈 Dashboards", "⚙️ Impostazioni API"])
+tab_chat, tab_dash, tab_settings = st.tabs(["💬 Coach IA", "📈 Dashboards", "⚙️ Tutte le Chiavi API"])
 
 with tab_chat:
     if "messages" not in st.session_state:
@@ -133,8 +195,7 @@ with tab_chat:
                 # 2. RAG da Pinecone
                 rag_context = query_rag(user_input, k=3)
                 
-                # 3. Router Logica
-                # Se l'utente chiede una scheda, usiamo un prompt pesante. Altrimenti chat veloce.
+                # 3. Router Logica Prompt
                 if "scheda" in user_input.lower() or "piano" in user_input.lower():
                     system_prompt_text = (
                         "Sei Dre2nCoach, esperto coach di Triathlon. Genera un piano di allenamento dettagliato.\n"
@@ -147,75 +208,66 @@ with tab_chat:
                         f"{workout_context}\n{rag_context}"
                     )
                 
-                google_api_key = os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None)
-                if google_api_key:
-                    os.environ["GOOGLE_API_KEY"] = google_api_key
-                    
-                if not google_api_key:
-                    st.error("Google Gemini API Key mancante. Aggiungila nei Secrets di Streamlit Cloud o nel tab 'Impostazioni API'.")
+                # 4. Inizializzazione LLM (Gemini o OpenAI)
+                current_provider = st.session_state.get("ai_provider_select", "Google Gemini")
+                llm = None
+                
+                if current_provider == "OpenAI (ChatGPT)":
+                    openai_api_key = os.environ.get("OPENAI_API_KEY") or (st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets else None)
+                    current_model = st.session_state.get("openai_model_choice", "gpt-4o-mini")
+                    if not openai_api_key:
+                        st.error("⚠️ Chiave OPENAI_API_KEY mancante. Inseriscila nella barra laterale o nei Secrets.")
+                    else:
+                        try:
+                            llm = ChatOpenAI(model=current_model, api_key=openai_api_key, temperature=0.7)
+                        except Exception as e:
+                            st.error(f"Errore inizializzazione OpenAI: {e}")
                 else:
+                    google_api_key = os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None)
+                    current_model = st.session_state.get("gemini_model_choice", "gemini-2.0-flash")
+                    if not google_api_key:
+                        st.error("⚠️ Chiave GOOGLE_API_KEY mancante. Inseriscila nella barra laterale o nei Secrets.")
+                    else:
+                        try:
+                            llm = ChatGoogleGenerativeAI(
+                                model=current_model,
+                                google_api_key=google_api_key,
+                                temperature=0.7
+                            )
+                        except Exception as e:
+                            st.error(f"Errore inizializzazione Gemini: {e}")
+                
+                if llm:
+                    full_chat = [SystemMessage(content=system_prompt_text)]
+                    full_chat.extend(st.session_state.messages)
                     try:
-                        selected_model = st.session_state.get("gemini_model_choice", "gemini-1.5-flash")
-                        llm = ChatGoogleGenerativeAI(
-                            model=selected_model,
-                            google_api_key=google_api_key,
-                            temperature=0.7
-                        )
-                        full_chat = [SystemMessage(content=system_prompt_text)]
-                        full_chat.extend(st.session_state.messages)
                         response = llm.invoke(full_chat)
                         st.write(response.content)
                         st.session_state.messages.append(AIMessage(content=response.content))
                     except Exception as e:
-                        st.error(f"Errore LLM ({selected_model}): {e}")
-                        st.info("💡 Vai nel tab **⚙️ Impostazioni API** e clicca su **'Testa Connessione Gemini'** per verificare la chiave e scoprire quali modelli sono abilitati sul tuo account Google.")
+                        st.error(f"Errore generazione risposta ({current_model}): {e}")
+                        st.info("💡 Suggerimento: Puoi cambiare modello o fornitore (es. OpenAI GPT-4o o Gemini 2.0 / Pro) direttamente dalla barra laterale a sinistra.")
 
 with tab_dash:
     render_dashboards(USER_ID)
 
 with tab_settings:
-    st.info("Per il deployment, salva queste chiavi in **Streamlit Cloud -> Advanced Settings -> Secrets**. Se le inserisci qui, verranno usate come variabili d'ambiente temporanee.")
+    st.info("Per il deployment definitivo, inserisci queste chiavi in **Streamlit Cloud -> App settings -> Secrets**.")
     
-    st.markdown("### 🤖 Configurazione Modello IA")
-    gemini_model = st.selectbox(
-        "Modello Gemini da utilizzare",
-        ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"],
-        key="gemini_model_choice"
-    )
-    
-    st.markdown("### 🔑 Chiavi API")
     k_google = st.text_input("Google Gemini API Key", type="password")
+    k_openai = st.text_input("OpenAI API Key (Opzionale per GPT-4o)", type="password")
     k_pinecone = st.text_input("Pinecone API Key", type="password")
     k_supa_url = st.text_input("Supabase URL")
     k_supa_key = st.text_input("Supabase Key", type="password")
     k_polar_id = st.text_input("Polar Client ID")
     k_polar_sec = st.text_input("Polar Client Secret", type="password")
     
-    col_save, col_test = st.columns(2)
-    with col_save:
-        if st.button("💾 Salva Chiavi Temporaneamente"):
-            if k_google: os.environ["GOOGLE_API_KEY"] = k_google.strip()
-            if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone.strip()
-            if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url.strip()
-            if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key.strip()
-            if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id.strip()
-            if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec.strip()
-            st.success("Chiavi salvate nella sessione!")
-            
-    with col_test:
-        if st.button("🧪 Testa Connessione Gemini"):
-            test_key = k_google.strip() if k_google else (os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None))
-            if not test_key:
-                st.error("Nessuna chiave Google Gemini trovata per il test.")
-            else:
-                try:
-                    import google.generativeai as genai
-                    genai.configure(api_key=test_key)
-                    models = [m.name.replace("models/", "") for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-                    if models:
-                        st.success(f"✅ Connessione riuscita! Modelli disponibili con questa chiave: {', '.join(models[:6])}")
-                    else:
-                        st.warning("⚠️ Connessione effettuata, ma nessun modello ha il permesso 'generateContent'.")
-                except Exception as ex:
-                    st.error(f"❌ Errore test Google Gemini: {ex}")
-                    st.info("Consiglio: crea una chiave gratuita direttamente su https://aistudio.google.com/app/apikey")
+    if st.button("💾 Salva Tutte le Chiavi Temporaneamente"):
+        if k_google: os.environ["GOOGLE_API_KEY"] = k_google.strip()
+        if k_openai: os.environ["OPENAI_API_KEY"] = k_openai.strip()
+        if k_pinecone: os.environ["PINECONE_API_KEY"] = k_pinecone.strip()
+        if k_supa_url: os.environ["SUPABASE_URL"] = k_supa_url.strip()
+        if k_supa_key: os.environ["SUPABASE_KEY"] = k_supa_key.strip()
+        if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id.strip()
+        if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec.strip()
+        st.success("Tutte le chiavi salvate nella sessione!")

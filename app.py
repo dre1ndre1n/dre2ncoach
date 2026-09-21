@@ -100,12 +100,49 @@ with st.sidebar:
     )
     
     if ai_provider == "Google Gemini":
-        selected_model = st.selectbox(
-            "Modello Gemini",
-            ["gemini-2.0-flash", "gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+        active_gemini_key = os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None)
+        
+        # Recupero dinamico dei modelli supportati dall'account
+        available_gemini_models = []
+        if active_gemini_key:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=active_gemini_key)
+                available_gemini_models = [
+                    m.name.replace("models/", "")
+                    for m in genai.list_models()
+                    if "generateContent" in m.supported_generation_methods
+                ]
+            except Exception:
+                pass
+                
+        if not available_gemini_models:
+            available_gemini_models = [
+                "gemini-2.5-flash",
+                "gemini-2.5-pro",
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
+                "gemini-1.5-pro",
+                "gemini-pro",
+                "Inserisci nome manuale"
+            ]
+        else:
+            available_gemini_models.append("Inserisci nome manuale")
+            
+        chosen_option = st.selectbox(
+            "Modello Gemini (Rilevati dal tuo account)",
+            available_gemini_models,
             index=0,
-            key="gemini_model_choice"
+            key="gemini_model_choice_raw"
         )
+        
+        if chosen_option == "Inserisci nome manuale":
+            selected_model = st.text_input("Digita il nome esatto del modello (es. gemini-2.5-flash)", value="gemini-2.5-flash", key="gemini_custom_model")
+        else:
+            selected_model = chosen_option
+            
+        st.session_state["gemini_model_choice"] = selected_model
+        
         gemini_input_key = st.text_input("Inserisci/Cambia Gemini Key", type="password", key="side_gemini_key")
         if gemini_input_key:
             os.environ["GOOGLE_API_KEY"] = gemini_input_key.strip()
@@ -120,7 +157,7 @@ with st.sidebar:
                     genai.configure(api_key=test_key)
                     models = [m.name.replace("models/", "") for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
                     if models:
-                        st.success(f"✅ Connessione OK! Modelli attivi: {', '.join(models[:5])}")
+                        st.success(f"✅ Connessione OK! Modelli attivi: {', '.join(models)}")
                     else:
                         st.warning("⚠️ Chiave valida ma nessun modello con generateContent trovato.")
                 except Exception as ex:

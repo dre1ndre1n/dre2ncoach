@@ -147,21 +147,27 @@ with tab_chat:
                         f"{workout_context}\n{rag_context}"
                     )
                 
-                google_api_key = st.secrets.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash",
-                    google_api_key=google_api_key,
-                    temperature=0.7
-                )
-                full_chat = [SystemMessage(content=system_prompt_text)]
-                full_chat.extend(st.session_state.messages)
-                
-                try:
-                    response = llm.invoke(full_chat)
-                    st.write(response.content)
-                    st.session_state.messages.append(AIMessage(content=response.content))
-                except Exception as e:
-                    st.error(f"Errore LLM (Controlla GOOGLE_API_KEY): {e}")
+                google_api_key = os.environ.get("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets else None)
+                if google_api_key:
+                    os.environ["GOOGLE_API_KEY"] = google_api_key
+                    
+                if not google_api_key:
+                    st.error("Google Gemini API Key mancante. Aggiungila nei Secrets di Streamlit Cloud o nel tab 'Impostazioni API'.")
+                else:
+                    try:
+                        llm = ChatGoogleGenerativeAI(
+                            model="gemini-1.5-flash",
+                            google_api_key=google_api_key,
+                            temperature=0.7
+                        )
+                        full_chat = [SystemMessage(content=system_prompt_text)]
+                        full_chat.extend(st.session_state.messages)
+                        response = llm.invoke(full_chat)
+                        st.write(response.content)
+                        st.session_state.messages.append(AIMessage(content=response.content))
+                    except Exception as e:
+                        st.error(f"Errore LLM: {e}")
+                        st.info("💡 Se l'errore indica 404 (model not found), controlla di aver generato la chiave su https://aistudio.google.com/app/apikey e non su Google Cloud Console senza l'API abilitata.")
 
 with tab_dash:
     render_dashboards(USER_ID)

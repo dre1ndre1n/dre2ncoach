@@ -147,7 +147,12 @@ with tab_chat:
                         f"{workout_context}\n{rag_context}"
                     )
                 
-                llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.7)
+                google_api_key = st.secrets.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=google_api_key,
+                    temperature=0.7
+                )
                 full_chat = [SystemMessage(content=system_prompt_text)]
                 full_chat.extend(st.session_state.messages)
                 

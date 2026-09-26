@@ -4,7 +4,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-from data_utils import process_training_files
+from data_utils import process_training_files, build_coach_training_context
 from rag_utils import (
     build_rag_index,
     query_rag,
@@ -13,7 +13,13 @@ from rag_utils import (
     get_index_stats
 )
 from polar_api import get_polar_auth_url, exchange_code_for_token, fetch_and_save_exercises
-from database import get_recent_workouts, get_polar_token
+from database import (
+    get_recent_workouts,
+    get_polar_token,
+    save_chat_message,
+    get_chat_history,
+    clear_chat_history
+)
 from dashboards import render_dashboards
 
 # --- PAGE CONFIG ---
@@ -263,44 +269,74 @@ with st.sidebar:
 tab_chat, tab_dash, tab_settings = st.tabs(["💬 Coach IA", "📈 Dashboards", "⚙️ Tutte le Chiavi API"])
 
 with tab_chat:
-    if "messages" not in st.session_state:
-        st.session_state.messages = [AIMessage(content="Ciao! Sono Dre2nCoach. Ho accesso al tuo storico Polar (se sincronizzato) e alla libreria scientifica su Pinecone. Come impostiamo la settimana?")]
+    # Intestazione e controllo memoria
+    col_info, col_reset = st.columns([4, 1])
+    with col_info:
+        st.markdown(
+            """
+            <div style='background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 8px 14px; margin-bottom: 12px;'>
+                🎯 <b>Obiettivo Attivo:</b> <span style='color: #38BDF8;'>Mezza Maratona (Novembre 2026)</span> &nbsp;|&nbsp; 
+                🧠 <b>Memoria Coach:</b> <span style='color: #10B981;'>Attiva (Sincronizzata su Supabase)</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with col_reset:
+        if st.button("🧹 Reset Chat", help="Cancella la memoria della conversazione per avviare una nuova fase"):
+            clear_chat_history(USER_ID)
+            st.session_state.messages = [
+                AIMessage(content="Memoria conversazione azzerata! Ciao Samuele, sono pronto per pianificare la tua preparazione per la Mezza Maratona di Novembre. Come procediamo?")
+            ]
+            st.rerun()
 
+    # Inizializzazione messaggi con recupero da Supabase
+    if "messages" not in st.session_state:
+        db_history = get_chat_history(USER_ID, limit=50)
+        if db_history:
+            st.session_state.messages = [
+                HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
+                for m in db_history
+            ]
+        else:
+            st.session_state.messages = [
+                AIMessage(content="Ciao Samuele! Sono Dre2nCoach ⚡. Ho accesso a tutto il tuo storico Polar e alla libreria scientifica su Pinecone.\n\nCon la **Mezza Maratona di Novembre** come obiettivo, monitorerò la progressione del volume settimanale, i lunghi e il recupero per farti arrivare al top della forma. Come impostiamo la settimana?")
+            ]
+
+    # Visualizzazione messaggi
     for msg in st.session_state.messages:
         with st.chat_message("user" if isinstance(msg, HumanMessage) else "assistant"):
             st.write(msg.content)
 
-    user_input = st.chat_input("Chiedimi un consiglio o genera una scheda...")
+    user_input = st.chat_input("Chiedimi un consiglio, un'analisi del volume o genera la scheda...")
     if user_input:
+        # Registra messaggio utente localmente e su Supabase
         st.session_state.messages.append(HumanMessage(content=user_input))
+        save_chat_message(USER_ID, "user", user_input)
+        
         with st.chat_message("user"):
             st.write(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Il Coach sta analizzando..."):
-                # 1. Recupera Allenamenti Recenti da Supabase
-                recent_workouts = get_recent_workouts(USER_ID, limit=14)
-                workout_context = "Nessun allenamento recente trovato nel DB."
-                if recent_workouts:
-                    workout_context = "Storico recenti allenamenti (da Supabase):\n"
-                    for w in recent_workouts:
-                        workout_context += f"- {w['date']}: {w['sport']} per {w['duration_minutes']} min, FC media: {w['heart_rate_avg']}. Note: {w['description']}\n"
+            with st.spinner("Il Coach sta analizzando il carico Polar e la letteratura scientifica..."):
+                # 1. Recupera Analisi Completa del Carico & Storico Polar da Supabase
+                training_context = build_coach_training_context(USER_ID)
                 
-                # 2. RAG da Pinecone
-                rag_context = query_rag(user_input, k=3)
+                # 2. RAG da Pinecone (Principi Scientifici da libri locali)
+                rag_context = query_rag(user_input, k=4)
                 
-                # 3. Router Logica Prompt
-                if "scheda" in user_input.lower() or "piano" in user_input.lower():
-                    system_prompt_text = (
-                        "Sei Dre2nCoach, esperto coach di Triathlon. Genera un piano di allenamento dettagliato.\n"
-                        f"{workout_context}\n"
-                        f"Usa questi principi scientifici: {rag_context}"
-                    )
-                else:
-                    system_prompt_text = (
-                        "Sei Dre2nCoach, assistente conversazionale di Triathlon. Rispondi in modo conciso.\n"
-                        f"{workout_context}\n{rag_context}"
-                    )
+                # 3. System Prompt specializzato per Mezza Maratona & Progressione Volumi
+                system_prompt_text = (
+                    "Sei Dre2nCoach, Head Coach d'élite esperto in Mezza Maratona, Triathlon e Scienze dell'Allenamento.\n"
+                    "Il tuo atleta (Samuele) sta preparando una MEZZA MARATONA (21.097 km) prevista per NOVEMBRE 2026.\n\n"
+                    "--- I TUOI COMPITI CHIAVE COME COACH ---\n"
+                    "1. MEMORIA & CONTINUITÀ: Ricorda sempre le conversazioni precedenti, le sensazioni espresse dall'atleta e le schede già concordate.\n"
+                    "2. PROGRESSIONE DEL VOLUME: Analizza attentamente il volume settimanale registrato da Polar. Applica la regola dell'overload progressivo (incrementi massimi di volume del 10% a settimana per la corsa, alternati a settimane di scarico/deload ogni 3-4 settimane).\n"
+                    "3. PROGRESSIONE DEI LUNGHI: Costruisci gradualmente il 'Lungo' domenicale (fino a 16-19 km in progressione prima dello scarico pre-gara).\n"
+                    "4. PREVENZIONE INFORTUNI & MOBILITÀ: Integra principi da 'Becoming a Supple Leopard' (Kelly Starrett) e 'Strength Training for Triathletes' (Patrick Hagerman).\n"
+                    "5. CHIAREZZA: Fornisci tabelle chiare giorno per giorno quando ti viene chiesta una scheda, specificando andature (ritmo gara vs aerobico lento Z2), durate e FC target.\n\n"
+                    f"{training_context}\n"
+                    f"{rag_context}"
+                )
                 
                 # 4. Inizializzazione LLM (Gemini o OpenAI)
                 current_provider = st.session_state.get("ai_provider_select", "Google Gemini")
@@ -338,6 +374,8 @@ with tab_chat:
                         response = llm.invoke(full_chat)
                         st.write(response.content)
                         st.session_state.messages.append(AIMessage(content=response.content))
+                        # Salva la risposta dell'assistente nel DB per memoria permanente
+                        save_chat_message(USER_ID, "assistant", response.content)
                     except Exception as e:
                         st.error(f"Errore generazione risposta ({current_model}): {e}")
                         st.info("💡 Suggerimento: Puoi cambiare modello o fornitore (es. OpenAI GPT-4o o Gemini 2.0 / Pro) direttamente dalla barra laterale a sinistra.")
@@ -365,3 +403,39 @@ with tab_settings:
         if k_polar_id: os.environ["POLAR_CLIENT_ID"] = k_polar_id.strip()
         if k_polar_sec: os.environ["POLAR_CLIENT_SECRET"] = k_polar_sec.strip()
         st.success("Tutte le chiavi salvate nella sessione!")
+        
+    with st.expander("🛠️ Istruzioni Setup Tabelle Supabase (Database)"):
+        st.markdown("""
+        Se crei un nuovo progetto Supabase o non hai ancora configurato le tabelle, esegui questo script nel **SQL Editor** di Supabase:
+        ```sql
+        -- 1. Tabella Profili Utente & Token Polar
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id TEXT PRIMARY KEY,
+            polar_access_token TEXT,
+            polar_user_id TEXT,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+        );
+
+        -- 2. Tabella Allenamenti Sincronizzati da Polar
+        CREATE TABLE IF NOT EXISTS workouts (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            date TIMESTAMP WITH TIME ZONE NOT NULL,
+            sport TEXT,
+            duration_minutes FLOAT,
+            heart_rate_avg INT,
+            calories INT,
+            description TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+        );
+
+        -- 3. Tabella Memoria Chat Persistente Coach
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+        );
+        ```
+        """)

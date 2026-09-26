@@ -5,7 +5,13 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from data_utils import process_training_files
-from rag_utils import build_rag_index, query_rag
+from rag_utils import (
+    build_rag_index,
+    query_rag,
+    get_local_pdf_files,
+    build_rag_index_from_local_files,
+    get_index_stats
+)
 from polar_api import get_polar_auth_url, exchange_code_for_token, fetch_and_save_exercises
 from database import get_recent_workouts, get_polar_token
 from dashboards import render_dashboards
@@ -189,17 +195,68 @@ with st.sidebar:
     st.markdown("</div>", unsafe_allow_html=True)
     
     st.markdown("<div class='sidebar-section'>", unsafe_allow_html=True)
-    st.markdown("<h3 style='color: #A855F7;'>📚 Libreria Permanente</h3>", unsafe_allow_html=True)
-    pdf_files = st.file_uploader("Carica PDF (Manuali/Scienza)", type=['pdf'], accept_multiple_files=True)
-    if st.button("Salva nella Libreria (Pinecone)"):
-        if pdf_files:
-            with st.spinner("Elaborazione e salvataggio sul database vettoriale..."):
-                if build_rag_index(pdf_files):
-                    st.success("Salvato permanentemente!")
-                else:
-                    st.error("Errore di salvataggio (controlla API Key Pinecone).")
+    st.markdown("<h3 style='color: #A855F7;'>📚 Libreria Permanente (Knowledge Base)</h3>", unsafe_allow_html=True)
+    
+    # Rilevamento automatico dei PDF salvati nel progetto
+    local_pdfs = get_local_pdf_files()
+    if local_pdfs:
+        st.markdown(f"**Manuali inclusi nel codice ({len(local_pdfs)}):**")
+        for f in local_pdfs:
+            # Mostra nome leggibile e dimensione
+            display_name = f['name']
+            if len(display_name) > 35:
+                display_name = display_name[:32] + "..."
+            st.markdown(f"- 📖 `{display_name}` *({f['size_mb']} MB)*")
+    else:
+        st.info("Nessun PDF trovato nella cartella del progetto.")
+        
+    # Mostra statistiche dell'indice Pinecone
+    stats = get_index_stats()
+    if stats.get("status") == "ready":
+        count = stats.get("vector_count", 0)
+        if count > 0:
+            st.success(f"🟢 Database attivo: **{count} estratti** salvati su Pinecone.")
         else:
-            st.warning("Carica prima un PDF.")
+            st.warning("🟡 Indice vuoto. Clicca sotto per indicizzare i file locali.")
+    elif stats.get("status") == "no_key":
+        st.warning("⚠️ Inserisci la Pinecone API Key per attivare la Knowledge Base.")
+    elif stats.get("status") == "not_created":
+        st.info("ℹ️ L'indice Pinecone verrà creato alla prima indicizzazione.")
+        
+    if st.button("🔄 Sincronizza / Indicizza PDF Locali", use_container_width=True):
+        if local_pdfs:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            def update_progress(cur, total, item_name, msg):
+                pct = min(1.0, (cur / max(1, total)))
+                progress_bar.progress(pct)
+                status_text.caption(f"⏳ **{item_name}**: {msg}")
+                
+            with st.spinner("Indicizzazione dei manuali locali in corso..."):
+                success, msg = build_rag_index_from_local_files(progress_callback=update_progress)
+                progress_bar.progress(1.0)
+                if success:
+                    st.success("✅ " + msg)
+                    st.rerun()
+                else:
+                    st.error("❌ " + msg)
+        else:
+            st.warning("Nessun PDF locale trovato da indicizzare.")
+            
+    with st.expander("➕ Carica PDF Aggiuntivo"):
+        extra_pdf = st.file_uploader("Upload manuale extra", type=['pdf'], accept_multiple_files=True, key="extra_pdf_upload")
+        if st.button("Salva PDF extra su Pinecone"):
+            if extra_pdf:
+                with st.spinner("Elaborazione PDF extra..."):
+                    if build_rag_index(extra_pdf):
+                        st.success("Salvato su Pinecone!")
+                        st.rerun()
+                    else:
+                        st.error("Errore di caricamento.")
+            else:
+                st.warning("Seleziona almeno un file.")
+                
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- MAIN TABS ---
